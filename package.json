@@ -2,6 +2,7 @@
   "name": "dub",
   "version": "1.0.0",
   "description": "A managed component for Dub.co link tracking and ecommerce events",
+  "type": "module",
   "main": "dist/index.js",
   "homepage": "https://github.com/plain-insure/dub-managed-component#readme",
   "repository": {
@@ -12,15 +13,15 @@
     "url": "https://github.com/plain-insure/dub-managed-component/issues"
   },
   "scripts": {
-    "dev": "bun build ./src/index.ts --watch",
+    "dev": "tsx bundle.ts --watch",
     "lint": "eslint .",
     "lint:fix": "eslint --fix",
-    "bundle": "bun run ./bundle.ts",
-    "build": "bun run lint && bun run typecheck && bun run test && bun run bundle",
+    "bundle": "tsx bundle.ts",
+    "build": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run bundle",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --globals",
     "test:dev": "vitest --globals",
-    "release": "bun run build && bunx managed-component-to-cloudflare-worker ./dist/index.js zaraz-dub"
+    "release": "pnpm run build && pnpm exec managed-component-to-cloudflare-worker ./dist/index.js zaraz-dub"
   },
   "keywords": [
     "webcm",
@@ -43,17 +44,20 @@
   "devDependencies": {
     "@eslint/js": "^9.11.1",
     "@managed-components/types": "^1.3.15",
-    "@types/bun": "^1.1.10",
     "@types/eslint": "^9.6.1",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.24.0",
     "eslint": "^9.11.1",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.1",
     "globals": "^15.10.0",
+    "tsx": "^4.20.6",
     "typescript": "^5.6.2",
     "typescript-eslint": "^8.8.1-alpha.0",
     "vitest": "^2.1.1"
   },
   "engines": {
-    "bun": ">=1.1.30"
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
   }
 }

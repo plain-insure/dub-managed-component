@@ -6,13 +6,15 @@ This is a managed component for Dub.co link tracking and ecommerce events. It's 
 
 ## Tech Stack
 
-- **Runtime**: Bun (>=1.1.30)
+- **Runtime**: Node.js (>=18.0.0)
+- **Package Manager**: pnpm (>=8.0.0)
 - **Language**: TypeScript (v5.6.2)
 - **Framework**: Managed Components (@managed-components/types)
 - **SDK**: Dub TypeScript SDK (v0.68.0)
 - **Testing**: Vitest (v2.1.1) with globals enabled
 - **Linting**: ESLint (v9.11.1) with TypeScript ESLint and Prettier
 - **Code Style**: Prettier
+- **Bundler**: esbuild
 - **Deployment**: Cloudflare Workers via managed-component-to-cloudflare-worker
 
 ## Repository Structure
@@ -38,29 +40,30 @@ This is a managed component for Dub.co link tracking and ecommerce events. It's 
 
 ### Prerequisites
 
-1. Install Bun: `curl -fsSL https://bun.sh/install | bash`
-2. Clone the repository
-3. Install dependencies: `bun install`
+1. Install Node.js (>=18.0.0): [https://nodejs.org/](https://nodejs.org/)
+2. Install pnpm (>=8.0.0): `npm install -g pnpm`
+3. Clone the repository
+4. Install dependencies: `pnpm install`
 
 ### Environment
 
-- This project uses Bun as the primary runtime and package manager
+- This project uses Node.js as the runtime and pnpm as the package manager
 - TypeScript is configured with strict mode enabled
 - ESLint uses the modern flat config format (eslint.config.mjs)
 
 ## Available Scripts
 
-All scripts should be run with `bun run`:
+All scripts should be run with `pnpm run`:
 
-- `bun run dev` - Build with watch mode (incremental development)
-- `bun run lint` - Lint code with ESLint
-- `bun run lint:fix` - Lint and automatically fix issues
-- `bun run typecheck` - Type check TypeScript without emitting files
-- `bun run test` - Run tests once with Vitest
-- `bun run test:dev` - Run tests in watch mode
-- `bun run bundle` - Bundle the component for distribution
-- `bun run build` - Full build: lint, typecheck, test, and bundle
-- `bun run release` - Build and deploy to Cloudflare Workers
+- `pnpm run dev` - Build with watch mode (incremental development)
+- `pnpm run lint` - Lint code with ESLint
+- `pnpm run lint:fix` - Lint and automatically fix issues
+- `pnpm run typecheck` - Type check TypeScript without emitting files
+- `pnpm run test` - Run tests once with Vitest
+- `pnpm run test:dev` - Run tests in watch mode
+- `pnpm run bundle` - Bundle the component for distribution
+- `pnpm run build` - Full build: lint, typecheck, test, and bundle
+- `pnpm run release` - Build and deploy to Cloudflare Workers
 
 ## Build Process
 
@@ -68,7 +71,7 @@ The build process follows this order:
 1. Lint with ESLint (must pass)
 2. Type check with TypeScript (must pass)
 3. Run tests with Vitest (must pass)
-4. Bundle with custom bundle script
+4. Bundle with esbuild via tsx
 
 Build output goes to `dist/index.js` and should not be committed to version control.
 
@@ -78,8 +81,8 @@ Build output goes to `dist/index.js` and should not be committed to version cont
 - Test files are named `*.test.ts` and located alongside source files
 - Tests are excluded from TypeScript compilation (see tsconfig.json)
 - Console usage in tests triggers linting errors (intentional constraint)
-- Run tests before committing: `bun run test`
-- Use watch mode during development: `bun run test:dev`
+- Run tests before committing: `pnpm run test`
+- Use watch mode during development: `pnpm run test:dev`
 
 ## Code Style & Conventions
 
@@ -176,7 +179,7 @@ Customer ID resolution follows this priority:
 ## Deployment
 
 The component is deployed to Cloudflare Workers:
-1. Build the component: `bun run build`
+1. Build the component: `pnpm run build`
 2. Convert to Cloudflare Worker: Uses `managed-component-to-cloudflare-worker`
 3. Deploy to Cloudflare: Requires CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_EMAIL
 
@@ -192,7 +195,7 @@ When deployed, the component accepts these settings:
 
 1. Create/modify code in `src/`
 2. Add tests in corresponding `.test.ts` file
-3. Run `bun run build` to verify everything passes
+3. Run `pnpm run build` to verify everything passes
 4. Test locally if possible
 5. Update README.md if the feature affects usage
 
@@ -206,13 +209,13 @@ When deployed, the component accepts these settings:
 ### Updating Dependencies
 
 1. Update package.json version
-2. Run `bun install` to update bun.lock
-3. Run `bun run build` to verify compatibility
+2. Run `pnpm install` to update pnpm-lock.yaml
+3. Run `pnpm run build` to verify compatibility
 4. Test thoroughly, especially SDK changes
 
 ## Best Practices
 
-1. **Always run the full build before committing**: `bun run build`
+1. **Always run the full build before committing**: `pnpm run build`
 2. **Write tests for new functionality**: Maintain test coverage
 3. **Follow existing patterns**: Stay consistent with the codebase
 4. **Type everything**: Leverage TypeScript's type system
@@ -227,7 +230,8 @@ When deployed, the component accepts these settings:
 - [Dub TypeScript SDK](https://dub.co/docs/sdks/typescript)
 - [Managed Components Docs](https://managedcomponents.dev/)
 - [Cloudflare Zaraz](https://developers.cloudflare.com/zaraz/)
-- [Bun Documentation](https://bun.sh/docs)
+- [Node.js Documentation](https://nodejs.org/docs)
+- [pnpm Documentation](https://pnpm.io/)
 
 ## Notes
 

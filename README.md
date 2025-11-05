@@ -22,14 +22,14 @@ Common use is currently for [Cloudflare Zaraz](https://www.cloudflare.com/applic
 Until this component is an "official" Managed Component, we need to manually host the MC in a Cloudflare Worker.
 
 1. Clone this repository
-2. Install dependencies with `bun install`
-3. Build the component with `bun run build`
+2. Install dependencies with `pnpm install`
+3. Build the component with `pnpm run build`
 4. Deploy to Cloudflare Workers:
    ```bash
    CLOUDFLARE_ACCOUNT_ID=<YOUR_ACCOUNT_ID> \
    CLOUDFLARE_API_TOKEN=<YOUR_API_TOKEN> \
    CLOUDFLARE_EMAIL=<YOUR_EMAIL> \
-   bun run release
+   pnpm run release
    ```
 5. Follow the prompts to setup the Worker
 6. Login to the Cloudflare dashboard and go to the [Zaraz Dashboard](https://dash.cloudflare.com/?to=/:account/:zone/zaraz/tools-config/tools/catalog)
@@ -143,32 +143,32 @@ zaraz.track('identify', {
 
 ### Prerequisites
 
-1. Make sure you're running [Bun](https://bun.sh/)
-2. Install dependencies with `bun install`
+1. Make sure you're running [Node.js](https://nodejs.org/) (>=18.0.0) and [pnpm](https://pnpm.io/) (>=8.0.0)
+2. Install dependencies with `pnpm install`
 
 ### Development Scripts
 
-- `bun run dev` - Build with watch mode
-- `bun run test` - Run tests once
-- `bun run test:dev` - Run tests in watch mode
-- `bun run lint` - Lint code
-- `bun run lint:fix` - Lint and auto-fix issues
-- `bun run typecheck` - Type check TypeScript
-- `bun run build` - Full build (lint, typecheck, test, bundle)
-- `bun run release` - Deploy to Cloudflare Workers
+- `pnpm run dev` - Build with watch mode
+- `pnpm run test` - Run tests once
+- `pnpm run test:dev` - Run tests in watch mode
+- `pnpm run lint` - Lint code
+- `pnpm run lint:fix` - Lint and auto-fix issues
+- `pnpm run typecheck` - Type check TypeScript
+- `pnpm run build` - Full build (lint, typecheck, test, bundle)
+- `pnpm run release` - Deploy to Cloudflare Workers
 
 ## Testing
 
 Run tests with:
 
 ```bash
-bun run test
+pnpm run test
 ```
 
 Or in watch mode:
 
 ```bash
-bun run test:dev
+pnpm run test:dev
 ```
 
 ## Deployment
@@ -176,7 +176,7 @@ bun run test:dev
 Deploy to Cloudflare Workers:
 
 ```bash
-bun run release
+pnpm run release
 ```
 
 Then configure it in the Cloudflare Zaraz Dashboard.
