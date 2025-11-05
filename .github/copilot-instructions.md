@@ -108,7 +108,7 @@ Build output goes to `dist/index.js` and should not be committed to version cont
 ### Formatting
 
 - Prettier is enforced via ESLint (prettier/prettier: error)
-- 2-space indentation (Prettier default, not explicitly configured)
+- 2-space indentation
 - Semicolons disabled (semi: false)
 - Single quotes for strings (singleQuote: true)
 - Trailing commas for ES5-compatible syntax (trailingComma: es5)
