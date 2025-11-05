@@ -6,6 +6,9 @@ import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended'
 
 /** @type {import("eslint").Linter.Config[]} */
 export default [
+  {
+    ignores: ['dist/**', 'node_modules/**'],
+  },
   js.configs.recommended,
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

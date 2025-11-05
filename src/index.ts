@@ -5,6 +5,7 @@ import type {
   Client,
 } from '@managed-components/types'
 import { Dub } from 'dub'
+import type { PaymentProcessor } from 'dub/models/components'
 import { getCookie } from './utils'
 
 const MC_COOKIE_NAME = 'mc_dub'
@@ -14,8 +15,21 @@ const handleCookieData = (client: Client, customerId?: string) => {
   const cookie = client.get(MC_COOKIE_NAME)
   let cookieData: { [k: string]: string | undefined } = {}
 
+  const generateId = () => {
+    // Use crypto.randomUUID if available, otherwise fallback to a simple UUID v4 implementation
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID()
+    }
+    // Fallback UUID v4 generator
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0
+      const v = c === 'x' ? r : (r & 0x3) | 0x8
+      return v.toString(16)
+    })
+  }
+
   const setFreshCookie = () => {
-    const sessionId = crypto.randomUUID()
+    const sessionId = generateId()
 
     cookieData = {
       sessionId,
@@ -39,7 +53,13 @@ const handleCookieData = (client: Client, customerId?: string) => {
     } else if (customerId && !cookieData.customerId) {
       // add customerId to cookie if cookie already exists
       cookieData.customerId = customerId
-      client.set(MC_COOKIE_NAME, encodeURIComponent(JSON.stringify(cookieData)))
+      client.set(
+        MC_COOKIE_NAME,
+        encodeURIComponent(JSON.stringify(cookieData)),
+        {
+          scope: 'infinite',
+        }
+      )
     }
   } else {
     setFreshCookie()
@@ -77,16 +97,27 @@ export const trackLeadEvent = async (
   const clickId = getClickId(client)
   const customerId = getCustomerId(event)
 
-  const leadData = {
+  const leadData: {
+    clickId: string
+    eventName: string
+    customerExternalId: string
+    customerName?: string
+    customerEmail?: string
+    customerAvatar?: string
+    eventQuantity?: number
+    metadata?: Record<string, unknown>
+  } = {
     clickId: clickId || '',
     eventName: payload.eventName || event.name || 'Lead',
     customerExternalId: customerId,
-    customerName: payload.customerName,
-    customerEmail: payload.customerEmail,
-    customerAvatar: payload.customerAvatar,
-    eventQuantity: payload.eventQuantity,
-    metadata: payload.metadata,
   }
+
+  // Only add optional fields if they have values
+  if (payload.customerName) leadData.customerName = payload.customerName
+  if (payload.customerEmail) leadData.customerEmail = payload.customerEmail
+  if (payload.customerAvatar) leadData.customerAvatar = payload.customerAvatar
+  if (payload.eventQuantity) leadData.eventQuantity = payload.eventQuantity
+  if (payload.metadata) leadData.metadata = payload.metadata
 
   await dub.track.lead(leadData)
 }
@@ -100,20 +131,38 @@ export const trackSaleEvent = async (
   const clickId = getClickId(client)
   const customerId = getCustomerId(event)
 
-  const saleData = {
+  const saleData: {
+    customerExternalId: string
+    amount: number
+    currency?: string
+    eventName?: string
+    paymentProcessor?: PaymentProcessor
+    invoiceId?: string
+    metadata?: Record<string, unknown>
+    leadEventName?: string
+    clickId?: string
+    customerName?: string
+    customerEmail?: string
+    customerAvatar?: string
+  } = {
     customerExternalId: customerId,
     amount: payload.amount || payload.revenue || 0,
-    currency: payload.currency,
-    eventName: payload.eventName || event.name || 'Sale',
-    paymentProcessor: payload.paymentProcessor,
-    invoiceId: payload.invoiceId || payload.transactionId,
-    metadata: payload.metadata,
-    leadEventName: payload.leadEventName,
-    clickId,
-    customerName: payload.customerName,
-    customerEmail: payload.customerEmail,
-    customerAvatar: payload.customerAvatar,
   }
+
+  // Only add optional fields if they have values
+  if (payload.currency) saleData.currency = payload.currency
+  if (payload.eventName || event.name)
+    saleData.eventName = payload.eventName || event.name || 'Sale'
+  if (payload.paymentProcessor)
+    saleData.paymentProcessor = payload.paymentProcessor as PaymentProcessor
+  if (payload.invoiceId || payload.transactionId)
+    saleData.invoiceId = payload.invoiceId || payload.transactionId
+  if (payload.metadata) saleData.metadata = payload.metadata
+  if (payload.leadEventName) saleData.leadEventName = payload.leadEventName
+  if (clickId) saleData.clickId = clickId
+  if (payload.customerName) saleData.customerName = payload.customerName
+  if (payload.customerEmail) saleData.customerEmail = payload.customerEmail
+  if (payload.customerAvatar) saleData.customerAvatar = payload.customerAvatar
 
   await dub.track.sale(saleData)
 }
