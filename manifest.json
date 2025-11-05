@@ -1,0 +1,39 @@
+{
+  "name": "Dub",
+  "namespace": "dub",
+  "description": "A managed component for Dub.co link tracking and ecommerce events",
+  "categories": ["Analytics", "Marketing"],
+  "provides": ["events"],
+  "icon": "assets/icon.svg",
+  "fields": [
+    {
+      "name": "DUB_API_KEY",
+      "type": "text",
+      "label": "Dub API Key",
+      "description": "Your Dub API key. You can find this in your Dub workspace settings",
+      "required": true
+    },
+    {
+      "name": "DUB_WORKSPACE_ID",
+      "type": "text",
+      "label": "Dub Workspace ID",
+      "description": "The ID of the Dub workspace you want to send events to",
+      "required": false
+    }
+  ],
+  "allowCustomFields": true,
+  "permissions": {
+    "access_client_kv": {
+      "description": "Dub uses cookies to track clicks and attribute conversions",
+      "required": true
+    },
+    "server_network_requests": {
+      "description": "This permission is used to send tracking events to Dub API",
+      "required": true
+    },
+    "provide_server_functionality": {
+      "description": "Allow Dub to provide custom server-side tracking logic",
+      "required": true
+    }
+  }
+}
