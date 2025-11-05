@@ -20,7 +20,10 @@ const handleCookieData = (client: Client, customerId?: string) => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
       return crypto.randomUUID()
     }
-    // Fallback UUID v4 generator
+    // Fallback UUID v4 generator for environments without crypto.randomUUID
+    // Note: This uses Math.random() which is not cryptographically secure
+    // However, this is only used for session tracking (not security purposes)
+    // and only as a fallback for older environments
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
       const r = (Math.random() * 16) | 0
       const v = c === 'x' ? r : (r & 0x3) | 0x8
