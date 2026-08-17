@@ -5,7 +5,7 @@ import type {
   Client,
 } from '@managed-components/types'
 import { Dub } from 'dub'
-import type { PaymentProcessor } from 'dub/models/components'
+import { PaymentProcessor } from 'dub/models/components'
 import { getCookie } from './utils'
 
 const MC_COOKIE_NAME = 'mc_dub'
@@ -100,6 +100,20 @@ export const trackLeadEvent = async (
   const clickId = getClickId(client)
   const customerId = getCustomerId(event)
 
+  // Dub's /track/lead requires a real clickId. An empty string is only
+  // meaningful as the second step of the "deferred" lead flow (mode:
+  // "deferred" first, then a follow-up call with clickId: ""), which this
+  // component doesn't implement. Without a clickId there's no click for
+  // Dub to attribute the lead to, so skip rather than send a request Dub
+  // can't resolve (this is expected for most direct/organic traffic that
+  // didn't arrive via a Dub link).
+  if (!clickId) {
+    console.info(
+      'Skipping lead event: no dub_id click ID found for this visitor'
+    )
+    return
+  }
+
   const leadData: {
     clickId: string
     eventName: string
@@ -110,7 +124,7 @@ export const trackLeadEvent = async (
     eventQuantity?: number
     metadata?: Record<string, unknown>
   } = {
-    clickId: clickId || '',
+    clickId,
     eventName: payload.eventName || event.name || 'Lead',
     customerExternalId: customerId,
   }
@@ -156,8 +170,17 @@ export const trackSaleEvent = async (
   if (payload.currency) saleData.currency = payload.currency
   if (payload.eventName || event.name)
     saleData.eventName = payload.eventName || event.name || 'Sale'
-  if (payload.paymentProcessor)
+  // Dub only accepts a closed set of payment processor values. An
+  // unrecognized value would otherwise fail SDK validation and cause the
+  // entire sale event to be dropped, so only forward it if it's valid.
+  if (
+    payload.paymentProcessor &&
+    Object.values(PaymentProcessor).includes(
+      payload.paymentProcessor as PaymentProcessor
+    )
+  ) {
     saleData.paymentProcessor = payload.paymentProcessor as PaymentProcessor
+  }
   if (payload.invoiceId || payload.transactionId)
     saleData.invoiceId = payload.invoiceId || payload.transactionId
   if (payload.metadata) saleData.metadata = payload.metadata

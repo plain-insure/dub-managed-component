@@ -92,7 +92,7 @@ describe('Dub MC track lead event handler works correctly', () => {
     expect(callArgs.eventName).toEqual('Custom Lead Event')
   })
 
-  it('tracks a lead event with empty clickId when not available', async () => {
+  it('skips tracking when no clickId is available', async () => {
     const fakeEvent = new Event('track', {}) as unknown as MCEvent
     // @ts-expect-error - payload is read only
     fakeEvent.payload = {
@@ -106,9 +106,10 @@ describe('Dub MC track lead event handler works correctly', () => {
 
     await trackLeadEvent(mockDub as any, fakeEvent)
 
-    expect(mockTrackLead).toHaveBeenCalledTimes(1)
-    const callArgs = mockTrackLead.mock.calls[0][0]
-    expect(callArgs.clickId).toEqual('')
+    // Dub's /track/lead requires a real clickId; an empty string is only
+    // valid inside the "deferred" lead flow, which isn't implemented here,
+    // so the event should be skipped rather than sent with clickId: ''.
+    expect(mockTrackLead).not.toHaveBeenCalled()
   })
 
   it('includes metadata when provided', async () => {
@@ -198,6 +199,24 @@ describe('Dub MC track sale event handler works correctly', () => {
     expect(mockTrackSale).toHaveBeenCalledTimes(1)
     const callArgs = mockTrackSale.mock.calls[0][0]
     expect(callArgs.paymentProcessor).toEqual('stripe')
+  })
+
+  it('omits an invalid payment processor instead of dropping the event', async () => {
+    const fakeEvent = new Event('ecommerce', {}) as unknown as MCEvent
+    // @ts-expect-error - payload is read only
+    fakeEvent.payload = {
+      eventName: 'Payment Received',
+      customerExternalId: 'user123',
+      amount: 5000,
+      paymentProcessor: 'not-a-real-processor',
+    }
+    fakeEvent.client = dummyClient
+
+    await trackSaleEvent(mockDub as any, fakeEvent)
+
+    expect(mockTrackSale).toHaveBeenCalledTimes(1)
+    const callArgs = mockTrackSale.mock.calls[0][0]
+    expect(callArgs.paymentProcessor).toBeUndefined()
   })
 
   it('includes lead event name for attribution', async () => {
