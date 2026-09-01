@@ -6,10 +6,35 @@ import type {
 } from '@managed-components/types'
 import { Dub } from 'dub'
 import { PaymentProcessor } from 'dub/models/components'
+import { HTTPClient, type Fetcher } from 'dub/lib/http'
 import { getCookie } from './utils'
 
 const MC_COOKIE_NAME = 'mc_dub'
 const DUB_CLICK_ID_COOKIE = 'dub_id'
+const DEFAULT_DUB_API_HOST = 'https://api.dub.co'
+// Same default Dub's own client script uses for how long a click stays
+// attributable. See: https://dub.co/docs/sdks/client-side/installation-guides/manual
+const CLICK_COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000
+const DEFAULT_CLICK_QUERY_PARAM = 'via'
+
+// Cloudflare Worker deployments of this component (via
+// managed-component-to-cloudflare-worker, see `pnpm run release`) replace
+// the global `fetch` with one that always errors, specifically to force
+// components to make outbound requests through `manager.fetch` instead
+// (WebCM and other MC hosts implement this the same way). This adapts
+// `manager.fetch` into the `Fetcher` shape the Dub SDK expects, so both the
+// SDK's own HTTP calls and our own click-tracking request below go through
+// the sanctioned path rather than a bare `fetch()` that would silently fail
+// once deployed.
+const createManagerFetcher = (manager: Manager): Fetcher => {
+  return async (input, init) => {
+    const response = await manager.fetch(input, init)
+    if (!response) {
+      throw new Error('manager.fetch did not return a response')
+    }
+    return response
+  }
+}
 
 const handleCookieData = (client: Client, customerId?: string) => {
   const cookie = client.get(MC_COOKIE_NAME)
@@ -193,15 +218,150 @@ export const trackSaleEvent = async (
   await dub.track.sale(saleData)
 }
 
+const setClickIdCookie = (client: Client, clickId: string): void => {
+  client.set(DUB_CLICK_ID_COOKIE, clickId, {
+    scope: 'infinite',
+    expiry: new Date(Date.now() + CLICK_COOKIE_MAX_AGE_MS),
+  })
+}
+
+// Which query params (in addition to the default "via") to check for a
+// short link key, e.g. "?via=abc123". Configurable via DUB_QUERY_PARAMS as
+// either a JSON array or a comma-separated list.
+const getClickQueryParams = (settings: ComponentSettings): string[] => {
+  const raw = settings.DUB_QUERY_PARAMS
+  const params: string[] = []
+
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) params.push(...parsed.map(String))
+    } catch {
+      params.push(
+        ...String(raw)
+          .split(',')
+          .map((param) => param.trim())
+          .filter(Boolean)
+      )
+    }
+  }
+
+  if (!params.includes(DEFAULT_CLICK_QUERY_PARAM)) {
+    params.push(DEFAULT_CLICK_QUERY_PARAM)
+  }
+
+  return params
+}
+
+// Calls Dub's click-tracking endpoint directly — the same public endpoint
+// Dub's own client-side script posts to (no API key required) — and
+// returns the resulting clickId, if any. Uses manager.fetch rather than a
+// bare fetch() — see createManagerFetcher above for why.
+// See: https://dub.co/docs/sdks/client-side/installation-guides/manual
+const recordClick = async (
+  manager: Manager,
+  settings: ComponentSettings,
+  domain: string,
+  key: string,
+  url: string,
+  referrer: string
+): Promise<string | undefined> => {
+  const apiHost = settings.DUB_API_HOST || DEFAULT_DUB_API_HOST
+
+  try {
+    const response = await manager.fetch(`${apiHost}/track/click`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain, key, url, referrer }),
+    })
+
+    if (!response) {
+      console.error('Dub click tracking request could not be sent')
+      return undefined
+    }
+
+    if (!response.ok) {
+      console.error(`Dub click tracking request failed: ${response.status}`)
+      return undefined
+    }
+
+    const data = (await response.json()) as { clickId?: string }
+    return data.clickId
+  } catch (error) {
+    console.error('Failed to record Dub click:', error)
+    return undefined
+  }
+}
+
+// Detect and record a click for the current pageview, and store the
+// resulting clickId in the dub_id cookie ourselves — no client-side script
+// involved. Running this on every 'pageview' event (including client-side
+// navigations, which the host page/Zaraz also surface as 'pageview') means
+// SPA route changes are picked up too, not just the initial hard load.
+export const trackClick = async (
+  event: MCEvent,
+  settings: ComponentSettings,
+  manager: Manager
+): Promise<void> => {
+  const { client } = event
+  const url = client.url
+
+  const existingClickId = getClickId(client)
+  const attributionModel = settings.DUB_ATTRIBUTION_MODEL || 'last-click'
+  // Once a click is attributed, only a later click can override it under
+  // "last-click"; "first-click" keeps the original for the whole cookie
+  // lifetime.
+  if (existingClickId && attributionModel === 'first-click') return
+
+  // Case 1: the visitor arrived via an actual Dub short-link redirect,
+  // which appends `?dub_id=<clickId>` to the destination URL — Dub already
+  // recorded the click, we just need to persist it.
+  const dubIdParam = url.searchParams.get(DUB_CLICK_ID_COOKIE)
+  if (dubIdParam) {
+    setClickIdCookie(client, dubIdParam)
+    return
+  }
+
+  // Case 2: a "via"-style query param naming a short link key on your own
+  // configured domain (e.g. yoursite.com/?via=abc123, bypassing an actual
+  // short-domain redirect) — record the click ourselves.
+  const domain = settings.DUB_SHORT_DOMAIN
+  if (!domain) return
+
+  const key = getClickQueryParams(settings)
+    .map((param) => url.searchParams.get(param))
+    .find((value): value is string => Boolean(value))
+  if (!key) return
+
+  const clickId = await recordClick(
+    manager,
+    settings,
+    domain,
+    key,
+    url.toString(),
+    client.referer || ''
+  )
+  if (clickId) setClickIdCookie(client, clickId)
+}
+
 export default async (manager: Manager, settings: ComponentSettings) => {
-  // Initialize Dub SDK
+  // Initialize Dub SDK. Route its HTTP calls through manager.fetch instead
+  // of its default bare fetch() — see createManagerFetcher above.
   const dub = new Dub({
     token: settings.DUB_API_KEY,
+    httpClient: new HTTPClient({ fetcher: createManagerFetcher(manager) }),
   })
 
   // Event: pageview
   manager.addEventListener('pageview', async (event: MCEvent) => {
     console.info('"pageview" event received')
+    try {
+      // Detect and record a click for this pageview (or SPA navigation)
+      // and set the dub_id cookie ourselves — see trackClick.
+      await trackClick(event, settings, manager)
+    } catch (error) {
+      console.error('Failed to track click:', error)
+    }
     try {
       // Track pageview as a lead event
       await trackLeadEvent(dub, {

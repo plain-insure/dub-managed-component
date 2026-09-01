@@ -7,7 +7,12 @@ import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended'
 /** @type {import("eslint").Linter.Config[]} */
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**'],
+    // docs/dubtrack.js is Dub's own vendor script, kept only as an
+    // unmodified reference. worker/** (besides index.ts) is vendored from
+    // managed-component-to-cloudflare-worker — see worker/README.md.
+    // Neither is code we own the style of; it's type-checked separately
+    // instead (see `typecheck:worker`).
+    ignores: ['dist/**', 'node_modules/**', 'docs/**', 'worker/**'],
   },
   js.configs.recommended,
   eslint.configs.recommended,

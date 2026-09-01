@@ -8,7 +8,7 @@ Common use is currently for [Cloudflare Zaraz](https://www.cloudflare.com/applic
 
 ## Features
 
-- 🔗 **Link Click Tracking**: Automatically tracks clicks via Dub's click ID cookie
+- 🔗 **Link Click Tracking**: Records clicks server-side and sets the `dub_id` cookie itself — no client-side Dub script required
 - 📊 **Lead Tracking**: Track signups, form submissions, and other conversion events
 - 💰 **Ecommerce Tracking**: Track sales, purchases, and revenue events
 - 🎯 **Customer Attribution**: Associate events with customers for accurate attribution
@@ -19,25 +19,22 @@ Common use is currently for [Cloudflare Zaraz](https://www.cloudflare.com/applic
 
 ### Zaraz / Cloudflare Worker
 
-Until this component is an "official" Managed Component, we need to manually host the MC in a Cloudflare Worker.
+Until this component is an "official" Managed Component, we need to manually host the MC in a Cloudflare Worker. [worker/](worker/) adapts the built component (`dist/index.js`) into a real Worker that speaks Zaraz's Custom Managed Component protocol, and [wrangler.toml](wrangler.toml) is already configured to deploy it — no interactive setup needed.
 
 1. Clone this repository
 2. Install dependencies with `pnpm install`
-3. Build the component with `pnpm run build`
-4. Deploy to Cloudflare Workers:
+3. Authenticate wrangler once: `npx wrangler login` (or set `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` for non-interactive/CI use)
+4. Build and deploy:
    ```bash
-   CLOUDFLARE_ACCOUNT_ID=<YOUR_ACCOUNT_ID> \
-   CLOUDFLARE_API_TOKEN=<YOUR_API_TOKEN> \
-   CLOUDFLARE_EMAIL=<YOUR_EMAIL> \
-   pnpm run release
+   pnpm run deploy
    ```
-5. Follow the prompts to setup the Worker
-6. Login to the Cloudflare dashboard and go to the [Zaraz Dashboard](https://dash.cloudflare.com/?to=/:account/:zone/zaraz/tools-config/tools/catalog)
-7. Choose **Custom Managed Component**
-8. Select `custom-mc-zaraz-dub` from the list
-9. Grant **Server network requests** permission (required for API calls)
-10. Grant **Access client key-value store** permission (recommended for click tracking)
-11. Configure your Dub API Key in the tool settings
+   This lints, typechecks, tests and bundles the component, then runs `wrangler deploy`. (Plain `npx wrangler deploy` also works once `pnpm run build` has produced `dist/index.js`.)
+5. Login to the Cloudflare dashboard and go to the [Zaraz Dashboard](https://dash.cloudflare.com/?to=/:account/:zone/zaraz/tools-config/tools/catalog)
+6. Choose **Custom Managed Component**
+7. Select `custom-mc-zaraz-dub` from the list
+8. Grant **Server network requests** permission (required for API calls, including click tracking)
+9. Grant **Access client key-value store** permission (required to read/set the `dub_id` cookie)
+10. Configure your Dub API Key in the tool settings
 
 ## Configuration
 
@@ -51,11 +48,40 @@ Your Dub API key. You can find this in your [Dub workspace settings](https://dub
 
 The ID of the Dub workspace you want to send events to.
 
+#### Dub API Host `string` (optional)
+
+Override the host used for the click-tracking API call. Defaults to `https://api.dub.co`.
+
+#### Dub Short Domain `string` (optional)
+
+Your Dub short link domain. Only needed to record clicks for visits that land directly on your site with a short link key in the URL (e.g. `yoursite.com/?via=abc123`) instead of via an actual short-domain redirect — see [Click Tracking](#click-tracking) below.
+
+#### Dub Attribution Model `string` (optional)
+
+`last-click` (default) or `first-click` — whether a later click on the same visitor can override an already-attributed one.
+
+#### Dub Query Parameters `string` (optional)
+
+Additional query parameters to check for a short link key, as a JSON array or comma-separated list (e.g. `via,ref`). `via` is always included by default.
+
 ## Events
+
+### Click Tracking
+
+On every `pageview` event (including client-side/SPA navigations), this component checks the current URL and:
+
+- If a `?dub_id=` query param is present (the case when a visitor arrives via an actual Dub short-link redirect), it's stored directly as the `dub_id` cookie — Dub already recorded the click.
+- Otherwise, if a configured query param (default `via`) is present **and** a **Dub Short Domain** is configured, the component calls Dub's `/track/click` API directly to record the click, then stores the returned click ID as the `dub_id` cookie.
+
+No client-side Dub script is loaded — the click is recorded and the cookie is set entirely server-side:
+
+```javascript
+// Automatic - no code needed
+```
 
 ### Pageview Tracking
 
-Pageviews are automatically tracked as lead events:
+Pageviews are also automatically tracked as lead events (attributed to the click ID above, if one is set):
 
 ```javascript
 // Automatic - no code needed
@@ -153,9 +179,10 @@ zaraz.track('identify', {
 - `pnpm run test:dev` - Run tests in watch mode
 - `pnpm run lint` - Lint code
 - `pnpm run lint:fix` - Lint and auto-fix issues
-- `pnpm run typecheck` - Type check TypeScript
+- `pnpm run typecheck` - Type check the component (`src/`)
+- `pnpm run typecheck:worker` - Type check the Worker adapter (`worker/`)
 - `pnpm run build` - Full build (lint, typecheck, test, bundle)
-- `pnpm run release` - Deploy to Cloudflare Workers
+- `pnpm run deploy` / `pnpm run release` - Build and deploy to Cloudflare Workers
 
 ## Testing
 
@@ -176,10 +203,10 @@ pnpm run test:dev
 Deploy to Cloudflare Workers:
 
 ```bash
-pnpm run release
+pnpm run deploy
 ```
 
-Then configure it in the Cloudflare Zaraz Dashboard.
+This runs the full build then `wrangler deploy` using the [wrangler.toml](wrangler.toml)/[worker/](worker/) setup already in this repo — no interactive prompts. Then configure it in the Cloudflare Zaraz Dashboard.
 
 ## Resources
 

@@ -19,6 +19,34 @@
       "label": "Dub Workspace ID",
       "description": "The ID of the Dub workspace you want to send events to",
       "required": false
+    },
+    {
+      "name": "DUB_API_HOST",
+      "type": "text",
+      "label": "Dub API Host",
+      "description": "Override the host used for the click-tracking API call. Defaults to https://api.dub.co",
+      "required": false
+    },
+    {
+      "name": "DUB_SHORT_DOMAIN",
+      "type": "text",
+      "label": "Dub Short Domain",
+      "description": "Your Dub short link domain. Required to record clicks for visits that land directly on your site with a short link key in the URL (e.g. yoursite.com/?via=abc123) instead of via an actual short-domain redirect",
+      "required": false
+    },
+    {
+      "name": "DUB_ATTRIBUTION_MODEL",
+      "type": "text",
+      "label": "Dub Attribution Model",
+      "description": "'last-click' (default) or 'first-click' — whether a later click on the same visitor can override an already-attributed one",
+      "required": false
+    },
+    {
+      "name": "DUB_QUERY_PARAMS",
+      "type": "text",
+      "label": "Dub Query Parameters",
+      "description": "Additional query parameters to check for a short link key, as a JSON array or comma-separated list (e.g. \"via,ref\"). 'via' is always included by default",
+      "required": false
     }
   ],
   "allowCustomFields": true,
@@ -28,7 +56,7 @@
       "required": true
     },
     "server_network_requests": {
-      "description": "This permission is used to send tracking events to Dub API",
+      "description": "This permission is used to send tracking events to Dub's API, including recording clicks",
       "required": true
     },
     "provide_server_functionality": {

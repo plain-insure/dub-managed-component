@@ -1,6 +1,6 @@
 /* eslint-disable  @typescript-eslint/no-explicit-any */
-import type { MCEvent } from '@managed-components/types'
-import { trackLeadEvent, trackSaleEvent } from '.'
+import type { MCEvent, Manager } from '@managed-components/types'
+import { trackLeadEvent, trackSaleEvent, trackClick } from '.'
 
 // Mock Dub SDK
 const mockTrackLead = vi.fn()
@@ -279,5 +279,144 @@ describe('Dub MC track sale event handler works correctly', () => {
       plan: 'premium',
       quantity: 2,
     })
+  })
+})
+
+describe('Dub MC click tracking works correctly', () => {
+  // Real deployments (see managed-component-to-cloudflare-worker, used by
+  // `pnpm run release`) disable the global fetch() and require outbound
+  // requests to go through manager.fetch instead, so that's what trackClick
+  // is exercised with here rather than a stubbed global fetch.
+  const mockManagerFetch = vi.fn()
+  const mockManager = { fetch: mockManagerFetch } as unknown as Manager
+
+  const clickClient = (url: string, cookie = '') => ({
+    ...dummyClient,
+    url: new URL(url),
+    referer: 'https://www.google.com/',
+    set: vi.fn(),
+    get: (key: string) => (key === 'cookie' ? cookie : undefined),
+  })
+
+  beforeEach(() => {
+    mockManagerFetch.mockReset()
+  })
+
+  it('persists an existing dub_id query param directly, without calling the API', async () => {
+    const client = clickClient('https://example.com/?dub_id=click_abc')
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+
+    await trackClick(fakeEvent, {}, mockManager)
+
+    expect(mockManagerFetch).not.toHaveBeenCalled()
+    expect(client.set).toHaveBeenCalledWith(
+      'dub_id',
+      'click_abc',
+      expect.objectContaining({ scope: 'infinite' })
+    )
+  })
+
+  it('calls /track/click directly for a via param when a short domain is configured', async () => {
+    const client = clickClient('https://example.com/?via=partner123')
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+    mockManagerFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ clickId: 'click_xyz' }),
+    })
+
+    await trackClick(
+      fakeEvent,
+      { DUB_SHORT_DOMAIN: 'example.link' },
+      mockManager
+    )
+
+    expect(mockManagerFetch).toHaveBeenCalledWith(
+      'https://api.dub.co/track/click',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          domain: 'example.link',
+          key: 'partner123',
+          url: 'https://example.com/?via=partner123',
+          referrer: 'https://www.google.com/',
+        }),
+      })
+    )
+    expect(client.set).toHaveBeenCalledWith(
+      'dub_id',
+      'click_xyz',
+      expect.objectContaining({ scope: 'infinite' })
+    )
+  })
+
+  it('does nothing when there is no dub_id param and no short domain configured', async () => {
+    const client = clickClient('https://example.com/?via=partner123')
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+
+    await trackClick(fakeEvent, {}, mockManager)
+
+    expect(mockManagerFetch).not.toHaveBeenCalled()
+    expect(client.set).not.toHaveBeenCalled()
+  })
+
+  it('does not overwrite an existing click under the first-click attribution model', async () => {
+    const client = clickClient(
+      'https://example.com/?dub_id=click_new',
+      'dub_id=click_original'
+    )
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+
+    await trackClick(
+      fakeEvent,
+      { DUB_ATTRIBUTION_MODEL: 'first-click' },
+      mockManager
+    )
+
+    expect(mockManagerFetch).not.toHaveBeenCalled()
+    expect(client.set).not.toHaveBeenCalled()
+  })
+
+  it('overwrites an existing click under the default last-click attribution model', async () => {
+    const client = clickClient(
+      'https://example.com/?dub_id=click_new',
+      'dub_id=click_original'
+    )
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+
+    await trackClick(fakeEvent, {}, mockManager)
+
+    expect(client.set).toHaveBeenCalledWith(
+      'dub_id',
+      'click_new',
+      expect.objectContaining({ scope: 'infinite' })
+    )
+  })
+
+  it('does not set a cookie when the click API call fails', async () => {
+    const client = clickClient('https://example.com/?via=partner123')
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+    mockManagerFetch.mockResolvedValue({ ok: false, status: 500 })
+
+    await trackClick(
+      fakeEvent,
+      { DUB_SHORT_DOMAIN: 'example.link' },
+      mockManager
+    )
+
+    expect(client.set).not.toHaveBeenCalled()
+  })
+
+  it('does not set a cookie when manager.fetch returns no response', async () => {
+    const client = clickClient('https://example.com/?via=partner123')
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+    mockManagerFetch.mockResolvedValue(undefined)
+
+    await trackClick(
+      fakeEvent,
+      { DUB_SHORT_DOMAIN: 'example.link' },
+      mockManager
+    )
+
+    expect(client.set).not.toHaveBeenCalled()
   })
 })

@@ -29,5 +29,11 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": [
+    "src/**/*.test.ts",
+    // worker/** targets the Cloudflare Workers runtime (its own globals like
+    // Request/Response/ExecutionContext conflict with this config's DOM +
+    // Node types) and is type-checked separately — see worker/tsconfig.json.
+    "worker/**"
+  ]
 }
