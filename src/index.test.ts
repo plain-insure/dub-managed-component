@@ -1,6 +1,6 @@
 /* eslint-disable  @typescript-eslint/no-explicit-any */
 import type { MCEvent, Manager } from '@managed-components/types'
-import { trackLeadEvent, trackSaleEvent, trackClick } from '.'
+import component, { trackLeadEvent, trackSaleEvent, trackClick } from '.'
 
 // Mock Dub SDK
 const mockTrackLead = vi.fn()
@@ -32,6 +32,9 @@ const dummyClient = {
   execute: () => undefined,
   return: () => undefined,
   get: (key: string) => {
+    if (key === 'dub_id') {
+      return 'click123'
+    }
     if (key === 'cookie') {
       return 'dub_id=click123; other=value'
     }
@@ -295,8 +298,15 @@ describe('Dub MC click tracking works correctly', () => {
     url: new URL(url),
     referer: 'https://www.google.com/',
     set: vi.fn(),
-    get: (key: string) => (key === 'cookie' ? cookie : undefined),
+    get: (key: string) =>
+      key === 'dub_id' ? getCookieValue(cookie, 'dub_id') : undefined,
   })
+
+  const getCookieValue = (cookie: string, name: string) =>
+    cookie
+      .split(';')
+      .map((part) => part.trim().split('='))
+      .find(([key]) => key === name)?.[1]
 
   beforeEach(() => {
     mockManagerFetch.mockReset()
@@ -321,7 +331,10 @@ describe('Dub MC click tracking works correctly', () => {
     const fakeEvent = { client, payload: {} } as unknown as MCEvent
     mockManagerFetch.mockResolvedValue({
       ok: true,
-      json: async () => ({ clickId: 'click_xyz' }),
+      json: async () => ({
+        clickId: 'click_xyz',
+        partner: { id: 'pn_123', name: 'Partner' },
+      }),
     })
 
     await trackClick(
@@ -345,6 +358,14 @@ describe('Dub MC click tracking works correctly', () => {
     expect(client.set).toHaveBeenCalledWith(
       'dub_id',
       'click_xyz',
+      expect.objectContaining({ scope: 'infinite' })
+    )
+    expect(client.set).toHaveBeenCalledWith(
+      'dub_partner_data',
+      JSON.stringify({
+        clickId: 'click_xyz',
+        partner: { id: 'pn_123', name: 'Partner' },
+      }),
       expect.objectContaining({ scope: 'infinite' })
     )
   })
@@ -418,5 +439,19 @@ describe('Dub MC click tracking works correctly', () => {
     )
 
     expect(client.set).not.toHaveBeenCalled()
+  })
+})
+
+describe('Dub MC listener registration', () => {
+  it('registers only pageview click tracking', async () => {
+    const addEventListener = vi.fn()
+
+    await component({ addEventListener } as unknown as Manager, {})
+
+    expect(addEventListener).toHaveBeenCalledTimes(1)
+    expect(addEventListener).toHaveBeenCalledWith(
+      'pageview',
+      expect.any(Function)
+    )
   })
 })

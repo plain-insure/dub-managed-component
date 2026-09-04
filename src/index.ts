@@ -6,35 +6,16 @@ import type {
 } from '@managed-components/types'
 import { Dub } from 'dub'
 import { PaymentProcessor } from 'dub/models/components'
-import { HTTPClient, type Fetcher } from 'dub/lib/http'
 import { getCookie } from './utils'
 
 const MC_COOKIE_NAME = 'mc_dub'
 const DUB_CLICK_ID_COOKIE = 'dub_id'
+const DUB_PARTNER_DATA_COOKIE = 'dub_partner_data'
 const DEFAULT_DUB_API_HOST = 'https://api.dub.co'
 // Same default Dub's own client script uses for how long a click stays
 // attributable. See: https://dub.co/docs/sdks/client-side/installation-guides/manual
 const CLICK_COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000
 const DEFAULT_CLICK_QUERY_PARAM = 'via'
-
-// Cloudflare Worker deployments of this component (via
-// managed-component-to-cloudflare-worker, see `pnpm run release`) replace
-// the global `fetch` with one that always errors, specifically to force
-// components to make outbound requests through `manager.fetch` instead
-// (WebCM and other MC hosts implement this the same way). This adapts
-// `manager.fetch` into the `Fetcher` shape the Dub SDK expects, so both the
-// SDK's own HTTP calls and our own click-tracking request below go through
-// the sanctioned path rather than a bare `fetch()` that would silently fail
-// once deployed.
-const createManagerFetcher = (manager: Manager): Fetcher => {
-  return async (input, init) => {
-    const response = await manager.fetch(input, init)
-    if (!response) {
-      throw new Error('manager.fetch did not return a response')
-    }
-    return response
-  }
-}
 
 const handleCookieData = (client: Client, customerId?: string) => {
   const cookie = client.get(MC_COOKIE_NAME)
@@ -97,9 +78,10 @@ const handleCookieData = (client: Client, customerId?: string) => {
 }
 
 const getClickId = (client: Client): string | undefined => {
-  // Try to get click ID from dub_id cookie
-  const cookieString = client.get('cookie') || ''
-  return getCookie(cookieString, DUB_CLICK_ID_COOKIE)
+  return (
+    client.get(DUB_CLICK_ID_COOKIE) ||
+    getCookie(client.get('cookie') || '', DUB_CLICK_ID_COOKIE)
+  )
 }
 
 const getCustomerId = (event: MCEvent): string => {
@@ -218,11 +200,25 @@ export const trackSaleEvent = async (
   await dub.track.sale(saleData)
 }
 
-const setClickIdCookie = (client: Client, clickId: string): void => {
+const setClickCookies = (
+  client: Client,
+  clickId: string,
+  partnerData?: Record<string, unknown>
+): void => {
   client.set(DUB_CLICK_ID_COOKIE, clickId, {
     scope: 'infinite',
     expiry: new Date(Date.now() + CLICK_COOKIE_MAX_AGE_MS),
   })
+  if (partnerData) {
+    client.set(
+      DUB_PARTNER_DATA_COOKIE,
+      JSON.stringify({ clickId, ...partnerData }),
+      {
+        scope: 'infinite',
+        expiry: new Date(Date.now() + CLICK_COOKIE_MAX_AGE_MS),
+      }
+    )
+  }
 }
 
 // Which query params (in addition to the default "via") to check for a
@@ -265,7 +261,10 @@ const recordClick = async (
   key: string,
   url: string,
   referrer: string
-): Promise<string | undefined> => {
+): Promise<
+  | { clickId: string; partner?: Record<string, unknown>; discount?: unknown }
+  | undefined
+> => {
   const apiHost = settings.DUB_API_HOST || DEFAULT_DUB_API_HOST
 
   try {
@@ -285,8 +284,12 @@ const recordClick = async (
       return undefined
     }
 
-    const data = (await response.json()) as { clickId?: string }
-    return data.clickId
+    const data = (await response.json()) as {
+      clickId?: string
+      partner?: Record<string, unknown>
+      discount?: unknown
+    }
+    return data.clickId ? { ...data, clickId: data.clickId } : undefined
   } catch (error) {
     console.error('Failed to record Dub click:', error)
     return undefined
@@ -318,7 +321,7 @@ export const trackClick = async (
   // recorded the click, we just need to persist it.
   const dubIdParam = url.searchParams.get(DUB_CLICK_ID_COOKIE)
   if (dubIdParam) {
-    setClickIdCookie(client, dubIdParam)
+    setClickCookies(client, dubIdParam)
     return
   }
 
@@ -333,7 +336,7 @@ export const trackClick = async (
     .find((value): value is string => Boolean(value))
   if (!key) return
 
-  const clickId = await recordClick(
+  const click = await recordClick(
     manager,
     settings,
     domain,
@@ -341,93 +344,22 @@ export const trackClick = async (
     url.toString(),
     client.referer || ''
   )
-  if (clickId) setClickIdCookie(client, clickId)
+  if (click) {
+    setClickCookies(client, click.clickId, {
+      partner: click.partner,
+      discount: click.discount,
+    })
+  }
 }
 
 export default async (manager: Manager, settings: ComponentSettings) => {
-  // Initialize Dub SDK. Route its HTTP calls through manager.fetch instead
-  // of its default bare fetch() — see createManagerFetcher above.
-  const dub = new Dub({
-    token: settings.DUB_API_KEY,
-    httpClient: new HTTPClient({ fetcher: createManagerFetcher(manager) }),
-  })
-
   // Event: pageview
   manager.addEventListener('pageview', async (event: MCEvent) => {
     console.info('"pageview" event received')
     try {
-      // Detect and record a click for this pageview (or SPA navigation)
-      // and set the dub_id cookie ourselves — see trackClick.
       await trackClick(event, settings, manager)
     } catch (error) {
       console.error('Failed to track click:', error)
-    }
-    try {
-      // Track pageview as a lead event
-      await trackLeadEvent(dub, {
-        ...event,
-        payload: {
-          ...event.payload,
-          eventName: 'Pageview',
-        },
-      })
-    } catch (error) {
-      console.error('Failed to track pageview:', error)
-    }
-  })
-
-  // Event: event (generic custom event)
-  manager.addEventListener('event', async (event: MCEvent) => {
-    console.info('"event" event received')
-    try {
-      // Determine if this is a sale or lead event based on payload
-      if (event.payload.amount || event.payload.revenue) {
-        await trackSaleEvent(dub, event)
-      } else {
-        await trackLeadEvent(dub, event)
-      }
-    } catch (error) {
-      console.error('Failed to track event:', error)
-    }
-  })
-
-  // Event: track
-  manager.addEventListener('track', async (event: MCEvent) => {
-    console.info('"track" event received')
-    try {
-      // Determine if this is a sale or lead event based on payload
-      if (event.payload.amount || event.payload.revenue) {
-        await trackSaleEvent(dub, event)
-      } else {
-        await trackLeadEvent(dub, event)
-      }
-    } catch (error) {
-      console.error('Failed to track event:', error)
-    }
-  })
-
-  // Event: ecommerce (for ecommerce transactions)
-  manager.addEventListener('ecommerce', async (event: MCEvent) => {
-    console.info('"ecommerce" event received')
-    try {
-      await trackSaleEvent(dub, event)
-    } catch (error) {
-      console.error('Failed to track ecommerce event:', error)
-    }
-  })
-
-  // Event: identify (to associate a user with their ID)
-  manager.addEventListener('identify', async (event: MCEvent) => {
-    console.info('"identify" event received')
-    try {
-      // Store the customer ID in the cookie
-      const customerId =
-        event.payload.customerId || event.payload.customerExternalId
-      if (customerId) {
-        handleCookieData(event.client, customerId)
-      }
-    } catch (error) {
-      console.error('Failed to identify user:', error)
     }
   })
 }
