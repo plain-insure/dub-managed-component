@@ -5,6 +5,7 @@ import type {
   Client,
 } from '@managed-components/types'
 import { Dub } from 'dub'
+import { HTTPClient } from 'dub/lib/http'
 import { PaymentProcessor } from 'dub/models/components'
 import { getCookie } from './utils'
 
@@ -16,6 +17,68 @@ const DEFAULT_DUB_API_HOST = 'https://api.dub.co'
 // attributable. See: https://dub.co/docs/sdks/client-side/installation-guides/manual
 const CLICK_COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000
 const DEFAULT_CLICK_QUERY_PARAM = 'via'
+
+const isDebugEnabled = (settings: ComponentSettings): boolean => {
+  return settings.DUB_DEBUG === 'true'
+}
+
+const isClickIdDebugEnabled = (settings: ComponentSettings): boolean => {
+  return isDebugEnabled(settings) && settings.DUB_DEBUG_SHOW_CLICK_ID === 'true'
+}
+
+const debug = (enabled: boolean, message: string): void => {
+  if (enabled) console.info(`[Dub] ${message}`)
+}
+
+const debugOnClient = (
+  client: Client,
+  enabled: boolean,
+  message: string
+): void => {
+  if (enabled)
+    client.execute(`console.info(${JSON.stringify(`[Dub] ${message}`)})`)
+}
+
+const debugClickId = (client: Client, settings: ComponentSettings): void => {
+  if (!isClickIdDebugEnabled(settings)) return
+
+  const clickId = getClickId(client)
+  const message = clickId
+    ? `Pageview on ${client.url.hostname}: click ID ${clickId}`
+    : `Pageview on ${client.url.hostname}: no click ID`
+  debug(true, message)
+  debugOnClient(client, true, message)
+}
+
+const createManagerHttpClient = (
+  manager: Manager,
+  debugEnabled: boolean
+): HTTPClient => {
+  return new HTTPClient({
+    fetcher: async (input, init) => {
+      const request = new Request(input, init)
+      debug(
+        debugEnabled,
+        `Sending ${request.method} request to ${new URL(request.url).pathname}`
+      )
+      const response = await manager.fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      })
+
+      if (!response) {
+        throw new Error('Dub conversion request could not be sent')
+      }
+
+      debug(
+        debugEnabled,
+        `Dub conversion request completed with ${response.status}`
+      )
+      return response
+    },
+  })
+}
 
 const handleCookieData = (client: Client, customerId?: string) => {
   const cookie = client.get(MC_COOKIE_NAME)
@@ -200,12 +263,30 @@ export const trackSaleEvent = async (
   await dub.track.sale(saleData)
 }
 
+const hasSaleAmount = (event: MCEvent): boolean => {
+  const { amount, revenue } = event.payload
+  return amount !== undefined || revenue !== undefined
+}
+
+const trackConversionEvent = async (
+  dub: Dub,
+  event: MCEvent,
+  isSale = false
+): Promise<void> => {
+  if (isSale || hasSaleAmount(event)) {
+    await trackSaleEvent(dub, event)
+    return
+  }
+
+  await trackLeadEvent(dub, event)
+}
+
 const setClickCookies = (
   client: Client,
   clickId: string,
   partnerData?: Record<string, unknown>
-): void => {
-  client.set(DUB_CLICK_ID_COOKIE, clickId, {
+): boolean => {
+  const clickIdStored = client.set(DUB_CLICK_ID_COOKIE, clickId, {
     scope: 'infinite',
     expiry: new Date(Date.now() + CLICK_COOKIE_MAX_AGE_MS),
   })
@@ -219,6 +300,20 @@ const setClickCookies = (
       }
     )
   }
+
+  return Boolean(clickIdStored)
+}
+
+const debugClickIdAvailability = (
+  client: Client,
+  debugEnabled: boolean,
+  eventType: string
+): void => {
+  const message = getClickId(client)
+    ? `${eventType} received on ${client.url.hostname}: click ID is available`
+    : `${eventType} received on ${client.url.hostname}: click ID is not available`
+  debug(debugEnabled, message)
+  debugOnClient(client, debugEnabled, message)
 }
 
 // Which query params (in addition to the default "via") to check for a
@@ -260,7 +355,8 @@ const recordClick = async (
   domain: string,
   key: string,
   url: string,
-  referrer: string
+  referrer: string,
+  onDiagnostic: (message: string) => void
 ): Promise<
   | { clickId: string; partner?: Record<string, unknown>; discount?: unknown }
   | undefined
@@ -270,17 +366,22 @@ const recordClick = async (
   try {
     const response = await manager.fetch(`${apiHost}/track/click`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Referer: url,
+      },
       body: JSON.stringify({ domain, key, url, referrer }),
     })
 
     if (!response) {
       console.error('Dub click tracking request could not be sent')
+      onDiagnostic('Click API request could not be sent')
       return undefined
     }
 
     if (!response.ok) {
       console.error(`Dub click tracking request failed: ${response.status}`)
+      onDiagnostic(`Click API request failed with ${response.status}`)
       return undefined
     }
 
@@ -289,9 +390,17 @@ const recordClick = async (
       partner?: Record<string, unknown>
       discount?: unknown
     }
-    return data.clickId ? { ...data, clickId: data.clickId } : undefined
+    if (!data.clickId) {
+      onDiagnostic(
+        `Click API response ${response.status} did not include a click ID`
+      )
+      return undefined
+    }
+
+    return { ...data, clickId: data.clickId }
   } catch (error) {
     console.error('Failed to record Dub click:', error)
+    onDiagnostic('Click API request failed before a response was received')
     return undefined
   }
 }
@@ -308,20 +417,34 @@ export const trackClick = async (
 ): Promise<void> => {
   const { client } = event
   const url = client.url
+  const debugEnabled = isDebugEnabled(settings)
 
   const existingClickId = getClickId(client)
   const attributionModel = settings.DUB_ATTRIBUTION_MODEL || 'last-click'
   // Once a click is attributed, only a later click can override it under
   // "last-click"; "first-click" keeps the original for the whole cookie
   // lifetime.
-  if (existingClickId && attributionModel === 'first-click') return
+  if (existingClickId && attributionModel === 'first-click') {
+    debug(debugEnabled, 'Click tracking skipped: preserving first click')
+    debugOnClient(
+      client,
+      debugEnabled,
+      'Click tracking skipped: preserving first click'
+    )
+    return
+  }
 
   // Case 1: the visitor arrived via an actual Dub short-link redirect,
   // which appends `?dub_id=<clickId>` to the destination URL — Dub already
   // recorded the click, we just need to persist it.
   const dubIdParam = url.searchParams.get(DUB_CLICK_ID_COOKIE)
   if (dubIdParam) {
-    setClickCookies(client, dubIdParam)
+    const stored = setClickCookies(client, dubIdParam)
+    const message = stored
+      ? 'Stored click ID supplied by a Dub redirect'
+      : 'Could not store click ID: access to client key-value storage is not granted'
+    debug(debugEnabled, message)
+    debugOnClient(client, debugEnabled, message)
     return
   }
 
@@ -329,37 +452,120 @@ export const trackClick = async (
   // configured domain (e.g. yoursite.com/?via=abc123, bypassing an actual
   // short-domain redirect) — record the click ourselves.
   const domain = settings.DUB_SHORT_DOMAIN
-  if (!domain) return
+  if (!domain) {
+    debug(debugEnabled, 'Click tracking skipped: DUB_SHORT_DOMAIN is not set')
+    debugOnClient(
+      client,
+      debugEnabled,
+      'Click tracking skipped: DUB_SHORT_DOMAIN is not set'
+    )
+    return
+  }
 
   const key = getClickQueryParams(settings)
     .map((param) => url.searchParams.get(param))
     .find((value): value is string => Boolean(value))
-  if (!key) return
+  if (!key) {
+    debug(debugEnabled, 'Click tracking skipped: no configured link key found')
+    debugOnClient(
+      client,
+      debugEnabled,
+      'Click tracking skipped: no configured link key found'
+    )
+    return
+  }
 
+  debug(debugEnabled, `Recording click for configured domain ${domain}`)
+  debugOnClient(
+    client,
+    debugEnabled,
+    `Recording click for configured domain ${domain}`
+  )
   const click = await recordClick(
     manager,
     settings,
     domain,
     key,
     url.toString(),
-    client.referer || ''
+    client.referer || '',
+    (message) => {
+      debug(debugEnabled, message)
+      debugOnClient(client, debugEnabled, message)
+    }
   )
   if (click) {
-    setClickCookies(client, click.clickId, {
+    const stored = setClickCookies(client, click.clickId, {
       partner: click.partner,
       discount: click.discount,
     })
+    const message = stored
+      ? 'Click recorded and click ID stored'
+      : 'Click recorded but the click ID could not be stored'
+    debug(debugEnabled, message)
+    debugOnClient(client, debugEnabled, message)
+  } else {
+    debug(debugEnabled, 'Click was not recorded')
+    debugOnClient(client, debugEnabled, 'Click was not recorded')
   }
 }
 
 export default async (manager: Manager, settings: ComponentSettings) => {
+  const debugEnabled = isDebugEnabled(settings)
+  // Dub's conversion APIs select a workspace from the API key. Click
+  // tracking below remains unauthenticated and selects it by short domain.
+  const dub = settings.DUB_API_KEY
+    ? new Dub({
+        token: settings.DUB_API_KEY,
+        httpClient: createManagerHttpClient(manager, debugEnabled),
+      })
+    : undefined
+
+  debug(
+    debugEnabled,
+    dub
+      ? 'Conversion tracking initialized'
+      : 'Conversion tracking disabled: DUB_API_KEY is not set'
+  )
+
   // Event: pageview
   manager.addEventListener('pageview', async (event: MCEvent) => {
-    console.info('"pageview" event received')
+    debug(debugEnabled, 'Pageview received')
+    debugOnClient(event.client, debugEnabled, 'Pageview received')
     try {
       await trackClick(event, settings, manager)
+      debugClickId(event.client, settings)
     } catch (error) {
       console.error('Failed to track click:', error)
     }
+  })
+
+  if (!dub) return
+
+  const handleConversionEvent = async (
+    event: MCEvent,
+    isSale = false
+  ): Promise<void> => {
+    try {
+      debugClickIdAvailability(
+        event.client,
+        debugEnabled,
+        isSale ? 'Ecommerce event' : 'Conversion event'
+      )
+      debug(
+        debugEnabled,
+        isSale || hasSaleAmount(event)
+          ? 'Sending sale conversion event'
+          : 'Sending lead conversion event'
+      )
+      await trackConversionEvent(dub, event, isSale)
+    } catch (error) {
+      console.error('Failed to track Dub conversion:', error)
+    }
+  }
+
+  manager.addEventListener('event', handleConversionEvent)
+  manager.addEventListener('track', handleConversionEvent)
+  manager.addEventListener('ecommerce', async (event: MCEvent) => {
+    await handleConversionEvent(event, true)
   })
 }

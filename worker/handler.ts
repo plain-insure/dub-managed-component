@@ -5,6 +5,11 @@ import { Context } from './context'
 import { Manager } from './manager'
 import { Env, EventBody, InitBody } from './models'
 ;(globalThis as any).systemFetch = globalThis.fetch
+
+const debug = (settings: ComponentSettings, message: string): void => {
+  if (settings.DUB_DEBUG === 'true') console.info(`[Dub MC] ${message}`)
+}
+
 // Widened from upstream's `string | Request` to satisfy the current
 // @cloudflare/workers-types global fetch signature (which also accepts URL).
 globalThis.fetch = (async (
@@ -67,6 +72,7 @@ export const handleRequest = async (
         request.headers.get('zaraz-permissions') || ''
       )
       settings = JSON.parse(request.headers.get('zaraz-settings') || '')
+      debug(settings, 'Received /route request')
       params = new URL(request.url).searchParams.toString()
     } catch (e) {
       return new Response('Invalid headers', { status: 400 })
@@ -99,6 +105,10 @@ export const handleRequest = async (
     if (url.pathname === '/init') {
       const manager = new Manager(context)
       const { settings } = body as InitBody
+      debug(
+        settings,
+        `Received /init (API key: ${Boolean(settings.DUB_API_KEY)}, short domain: ${Boolean(settings.DUB_SHORT_DOMAIN)})`
+      )
       await componentCb(manager, settings)
       const { cookies, ...restOfContext } = context
       return new Response(
@@ -111,15 +121,19 @@ export const handleRequest = async (
         })
       )
     } else if (url.pathname === '/event') {
-      const { eventType, event, settings, clientData, debug } =
+      const { eventType, event, settings, clientData, debug: isDebug } =
         body as EventBody
       const isClientEvent = url.searchParams.get('type') === 'client'
 
       context.cookies = clientData.cookies
-      context.debug = debug
+      context.debug = isDebug
 
       const manager = new Manager(context)
 
+      debug(
+        settings,
+        `Received /event for ${eventType} (API key: ${Boolean(settings.DUB_API_KEY)}, short domain: ${Boolean(settings.DUB_SHORT_DOMAIN)})`
+      )
       await componentCb(manager, settings)
       event.client = new Client(clientData, context)
       if (isClientEvent) {

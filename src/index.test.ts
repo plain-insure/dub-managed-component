@@ -1,17 +1,28 @@
 /* eslint-disable  @typescript-eslint/no-explicit-any */
 import type { MCEvent, Manager } from '@managed-components/types'
+
+const { mockDub, mockDubConstructor, mockTrackLead, mockTrackSale } =
+  vi.hoisted(() => {
+    const trackLead = vi.fn()
+    const trackSale = vi.fn()
+    const dub = {
+      track: {
+        lead: trackLead,
+        sale: trackSale,
+      },
+    }
+
+    return {
+      mockDub: dub,
+      mockDubConstructor: vi.fn(() => dub),
+      mockTrackLead: trackLead,
+      mockTrackSale: trackSale,
+    }
+  })
+
+vi.mock('dub', () => ({ Dub: mockDubConstructor }))
+
 import component, { trackLeadEvent, trackSaleEvent, trackClick } from '.'
-
-// Mock Dub SDK
-const mockTrackLead = vi.fn()
-const mockTrackSale = vi.fn()
-
-const mockDub = {
-  track: {
-    lead: mockTrackLead,
-    sale: mockTrackSale,
-  },
-}
 
 const dummyClient = {
   emitter: 'browser',
@@ -347,6 +358,10 @@ describe('Dub MC click tracking works correctly', () => {
       'https://api.dub.co/track/click',
       expect.objectContaining({
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Referer: 'https://example.com/?via=partner123',
+        },
         body: JSON.stringify({
           domain: 'example.link',
           key: 'partner123',
@@ -378,6 +393,42 @@ describe('Dub MC click tracking works correctly', () => {
 
     expect(mockManagerFetch).not.toHaveBeenCalled()
     expect(client.set).not.toHaveBeenCalled()
+  })
+
+  it('writes a safe debug message to the browser console when enabled', async () => {
+    const execute = vi.fn()
+    const client = { ...clickClient('https://example.com/'), execute }
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+
+    await trackClick(fakeEvent, { DUB_DEBUG: 'true' }, mockManager)
+
+    expect(execute).toHaveBeenCalledWith(
+      'console.info("[Dub] Click tracking skipped: DUB_SHORT_DOMAIN is not set")'
+    )
+  })
+
+  it('reports when Zaraz cannot store a recorded click ID', async () => {
+    const execute = vi.fn()
+    const client = {
+      ...clickClient('https://example.com/?via=partner123'),
+      execute,
+      set: () => undefined,
+    }
+    const fakeEvent = { client, payload: {} } as unknown as MCEvent
+    mockManagerFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ clickId: 'click_xyz' }),
+    })
+
+    await trackClick(
+      fakeEvent,
+      { DUB_SHORT_DOMAIN: 'example.link', DUB_DEBUG: 'true' },
+      mockManager
+    )
+
+    expect(execute).toHaveBeenCalledWith(
+      'console.info("[Dub] Click recorded but the click ID could not be stored")'
+    )
   })
 
   it('does not overwrite an existing click under the first-click attribution model', async () => {
@@ -414,17 +465,24 @@ describe('Dub MC click tracking works correctly', () => {
   })
 
   it('does not set a cookie when the click API call fails', async () => {
-    const client = clickClient('https://example.com/?via=partner123')
+    const execute = vi.fn()
+    const client = {
+      ...clickClient('https://example.com/?via=partner123'),
+      execute,
+    }
     const fakeEvent = { client, payload: {} } as unknown as MCEvent
     mockManagerFetch.mockResolvedValue({ ok: false, status: 500 })
 
     await trackClick(
       fakeEvent,
-      { DUB_SHORT_DOMAIN: 'example.link' },
+      { DUB_SHORT_DOMAIN: 'example.link', DUB_DEBUG: 'true' },
       mockManager
     )
 
     expect(client.set).not.toHaveBeenCalled()
+    expect(execute).toHaveBeenCalledWith(
+      'console.info("[Dub] Click API request failed with 500")'
+    )
   })
 
   it('does not set a cookie when manager.fetch returns no response', async () => {
@@ -443,11 +501,109 @@ describe('Dub MC click tracking works correctly', () => {
 })
 
 describe('Dub MC listener registration', () => {
-  it('registers only pageview click tracking', async () => {
+  beforeEach(() => {
+    mockDubConstructor.mockClear()
+    mockTrackLead.mockClear()
+    mockTrackSale.mockClear()
+  })
+
+  it('uses the API key for conversion tracking and registers conversion listeners', async () => {
+    const listeners = new Map<string, (event: MCEvent) => Promise<void>>()
+    const fetch = vi.fn().mockResolvedValue(new Response())
+    const addEventListener = vi.fn(
+      (eventType: string, listener: (event: MCEvent) => Promise<void>) => {
+        listeners.set(eventType, listener)
+      }
+    )
+
+    await component({ addEventListener, fetch } as unknown as Manager, {
+      DUB_API_KEY: 'dub_test_key',
+    })
+
+    expect(mockDubConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'dub_test_key',
+        httpClient: expect.anything(),
+      })
+    )
+
+    const { httpClient } = mockDubConstructor.mock.calls[0][0]
+    await httpClient.request(
+      new Request('https://api.dub.co/track/lead', {
+        method: 'POST',
+        body: '{}',
+      })
+    )
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.dub.co/track/lead',
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(addEventListener).toHaveBeenCalledTimes(4)
+    expect(addEventListener).toHaveBeenCalledWith(
+      'pageview',
+      expect.any(Function)
+    )
+    expect(addEventListener).toHaveBeenCalledWith('event', expect.any(Function))
+    expect(addEventListener).toHaveBeenCalledWith('track', expect.any(Function))
+    expect(addEventListener).toHaveBeenCalledWith(
+      'ecommerce',
+      expect.any(Function)
+    )
+
+    await listeners.get('track')?.({
+      client: dummyClient,
+      name: 'Registration',
+      payload: { customerExternalId: 'user123' },
+    } as unknown as MCEvent)
+
+    expect(mockTrackLead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clickId: 'click123',
+        customerExternalId: 'user123',
+        eventName: 'Registration',
+      })
+    )
+
+    mockTrackLead.mockClear()
+    await listeners.get('pageview')?.({
+      client: dummyClient,
+      payload: {},
+    } as unknown as MCEvent)
+
+    expect(mockTrackLead).not.toHaveBeenCalled()
+  })
+
+  it('logs the click ID on pageview only when explicitly enabled', async () => {
+    const listeners = new Map<string, (event: MCEvent) => Promise<void>>()
+    const addEventListener = vi.fn(
+      (eventType: string, listener: (event: MCEvent) => Promise<void>) => {
+        listeners.set(eventType, listener)
+      }
+    )
+    const execute = vi.fn()
+
+    await component({ addEventListener } as unknown as Manager, {
+      DUB_DEBUG: 'true',
+      DUB_DEBUG_SHOW_CLICK_ID: 'true',
+    })
+
+    await listeners.get('pageview')?.({
+      client: { ...dummyClient, execute },
+      payload: {},
+    } as unknown as MCEvent)
+
+    expect(execute).toHaveBeenCalledWith(
+      'console.info("[Dub] Pageview on example.com: click ID click123")'
+    )
+  })
+
+  it('does not initialize conversion tracking without an API key', async () => {
     const addEventListener = vi.fn()
 
     await component({ addEventListener } as unknown as Manager, {})
 
+    expect(mockDubConstructor).not.toHaveBeenCalled()
     expect(addEventListener).toHaveBeenCalledTimes(1)
     expect(addEventListener).toHaveBeenCalledWith(
       'pageview',

@@ -34,7 +34,15 @@ Until this component is an "official" Managed Component, we need to manually hos
 7. Select `custom-mc-zaraz-dub` from the list
 8. Grant **Server network requests** permission (required for API calls, including click tracking)
 9. Grant **Access client key-value store** permission (required to read/set the `dub_id` cookie)
-10. Configure your Dub API Key in the tool settings
+10. Under **Settings**, choose **Add custom setting** and add the following values:
+  - `DUB_API_KEY`: a Dub API key from the workspace that should receive lead and sale events.
+  - `DUB_SHORT_DOMAIN`: the Dub short-link domain from that same workspace, such as `go.example.com` (without `https://`).
+  - `DUB_DEBUG`: set to `true` temporarily to show Dub tracking decisions in Worker logs.
+  - `DUB_DEBUG_SHOW_CLICK_ID`: set to `true` with `DUB_DEBUG` only for a temporary cross-subdomain click-ID handoff test.
+
+For browser-console diagnostics while `DUB_DEBUG` is enabled, also grant **Execute unsafe scripts**. This permission is optional and is used only to write the same credential-safe debug messages to the visitor's browser console.
+
+Custom Managed Components expose only custom name/value settings. Cloudflare does not read this repository's [manifest.json](manifest.json) from the deployed Worker, so its predefined field definitions are not shown in the Zaraz dashboard. Predefined settings require publishing the component to Cloudflare's Managed Components catalog.
 
 ## Configuration
 
@@ -42,11 +50,15 @@ Until this component is an "official" Managed Component, we need to manually hos
 
 #### Dub API Key `string` (required)
 
-Your Dub API key. You can find this in your [Dub workspace settings](https://dub.co/settings).
+Your Dub API key. Lead and sale events are sent to the workspace associated with this key. Create the key in the same workspace that owns your configured short domain so conversion events can be attributed to its clicks. You can find it in your [Dub workspace settings](https://dub.co/settings).
 
-#### Dub Workspace ID `string` (optional)
+For the least-privilege key shown in Dub's API key creation screen, select:
 
-The ID of the Dub workspace you want to send events to.
+- **Type:** `Machine`
+- **Permissions:** `Restricted`
+- **Links, Tags, Folders, Domains, and Analytics:** `None`
+
+The component only calls Dub's lead and sale tracking APIs. It does not create, update, or read links, tags, folders, domains, or analytics, so no resource-level permission is required. A `You` key also works, but a `Machine` key is preferred for this server-side integration.
 
 #### Dub API Host `string` (optional)
 
@@ -54,7 +66,9 @@ Override the host used for the click-tracking API call. Defaults to `https://api
 
 #### Dub Short Domain `string` (optional)
 
-Your Dub short link domain. Only needed to record clicks for visits that land directly on your site with a short link key in the URL (e.g. `yoursite.com/?via=abc123`) instead of via an actual short-domain redirect — see [Click Tracking](#click-tracking) below.
+Your Dub short link domain. Clicks are recorded in the workspace that owns this domain. Only needed to record clicks for visits that land directly on your site with a short link key in the URL (e.g. `yoursite.com/?via=abc123`) instead of via an actual short-domain redirect — see [Click Tracking](#click-tracking) below.
+
+When your Dub workspace has **Allowed hostnames** configured in its Tracking settings, add the hostname of the site using this component, such as `yoursite.com`. The component forwards the current page URL as the click request's `Referer` so Dub can validate it. Use `*.yoursite.com` as well when tracking from staging subdomains.
 
 #### Dub Attribution Model `string` (optional)
 
@@ -63,6 +77,16 @@ Your Dub short link domain. Only needed to record clicks for visits that land di
 #### Dub Query Parameters `string` (optional)
 
 Additional query parameters to check for a short link key, as a JSON array or comma-separated list (e.g. `via,ref`). `via` is always included by default.
+
+#### Dub Debug Logging `true` (optional)
+
+Set `DUB_DEBUG` to `true` while troubleshooting. Worker logs will show whether a pageview was skipped because the short domain or link key was missing, whether Zaraz accepted the click-ID storage write, and the endpoint path and HTTP status for conversion requests. Failed click requests report their HTTP status; a successful response without a click ID is reported separately. For each lead, sale, or ecommerce event, the logs report the page hostname and whether the click ID is available there. With the optional **Execute unsafe scripts** permission, the same click-tracking messages appear in the browser DevTools console. Logs never include the API key, click ID, customer data, or request body. Remove the setting or set it to `false` after diagnosis.
+
+Client key-value storage uses the Components Manager's own first-party storage. The Managed Components API supports storage lifetime but does not provide a cookie-domain option, so cross-subdomain availability is controlled by Zaraz. To verify it, first load `https://p-staging.net/?via=<key>` and confirm `Click recorded and click ID stored`, then complete an ecommerce action on `app.p-staging.net`. The ecommerce debug message must report `click ID is available`; otherwise, the Zaraz client storage is not shared between those hostnames.
+
+For a temporary end-to-end handoff test, set both `DUB_DEBUG=true` and `DUB_DEBUG_SHOW_CLICK_ID=true`. Every pageview will log either `Pageview on <hostname>: click ID <value>` or `Pageview on <hostname>: no click ID`. Confirm the same value first appears on `p-staging.net` and then on `app.p-staging.net`. This setting exposes an attribution identifier in Worker and, with **Execute unsafe scripts**, browser logs; remove it or set it to `false` immediately after testing.
+
+The debug logs also show Custom Managed Component protocol delivery, for example `Received /init` and `Received /event for pageview`. They report only whether the API-key and short-domain settings are present, never their values. If these messages do not appear in the deployed Worker's logs after a page load, Zaraz is not invoking that Worker; verify that the dashboard tool points to the Worker deployed by `pnpm run release` and that the `DUB_DEBUG` custom setting is exactly `true`.
 
 ## Events
 
@@ -81,10 +105,13 @@ No client-side Dub script is loaded — the click is recorded and the cookie is 
 
 ### Pageview Tracking
 
-Pageviews are also automatically tracked as lead events (attributed to the click ID above, if one is set):
+Pageviews record or persist Dub click IDs only. They do not create lead events. Use a `track` or `event` call to record a lead after a conversion action:
 
 ```javascript
-// Automatic - no code needed
+zaraz.track('track', {
+  eventName: 'Sign Up',
+  customerExternalId: 'user_123',
+})
 ```
 
 ### Lead Tracking

@@ -10,15 +10,8 @@
       "name": "DUB_API_KEY",
       "type": "text",
       "label": "Dub API Key",
-      "description": "Your Dub API key. You can find this in your Dub workspace settings",
+      "description": "Your Dub API key. Lead and sale events are sent to the workspace associated with this key",
       "required": true
-    },
-    {
-      "name": "DUB_WORKSPACE_ID",
-      "type": "text",
-      "label": "Dub Workspace ID",
-      "description": "The ID of the Dub workspace you want to send events to",
-      "required": false
     },
     {
       "name": "DUB_API_HOST",
@@ -31,7 +24,7 @@
       "name": "DUB_SHORT_DOMAIN",
       "type": "text",
       "label": "Dub Short Domain",
-      "description": "Your Dub short link domain. Required to record clicks for visits that land directly on your site with a short link key in the URL (e.g. yoursite.com/?via=abc123) instead of via an actual short-domain redirect",
+      "description": "Your Dub short link domain. Clicks are recorded in the workspace that owns this domain. Required to record clicks for visits that land directly on your site with a short link key in the URL (e.g. yoursite.com/?via=abc123) instead of via an actual short-domain redirect",
       "required": false
     },
     {
@@ -46,6 +39,20 @@
       "type": "text",
       "label": "Dub Query Parameters",
       "description": "Additional query parameters to check for a short link key, as a JSON array or comma-separated list (e.g. \"via,ref\"). 'via' is always included by default",
+      "required": false
+    },
+    {
+      "name": "DUB_DEBUG",
+      "type": "text",
+      "label": "Dub Debug Logging",
+      "description": "Set to true to log click and conversion tracking decisions without exposing credentials or customer data",
+      "required": false
+    },
+    {
+      "name": "DUB_DEBUG_SHOW_CLICK_ID",
+      "type": "text",
+      "label": "Dub Debug Click ID",
+      "description": "Set to true with DUB_DEBUG for temporary diagnostics that include the click ID in logs",
       "required": false
     }
   ],
@@ -62,6 +69,10 @@
     "provide_server_functionality": {
       "description": "Allow Dub to provide custom server-side tracking logic",
       "required": true
+    },
+    "execute_unsafe_scripts": {
+      "description": "Optional: allow DUB_DEBUG to write credential-safe diagnostics to the browser console",
+      "required": false
     }
   }
 }

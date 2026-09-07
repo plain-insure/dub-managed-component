@@ -3,6 +3,15 @@ main = "worker/index.ts"
 compatibility_date = "2022-10-06"
 preview_urls = false
 
+[observability]
+redact_query_string = false
+
+	[observability.logs]
+	enabled = true
+
+	[observability.traces]
+	enabled = true
+
 # This component doesn't call manager.get/set/useCache/invalidateCache, so
 # no KV namespace is bound. If it ever does, create one and bind it here:
 #   npx wrangler kv namespace create dub_mc_kv
