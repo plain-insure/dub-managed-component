@@ -127,6 +127,17 @@ zaraz.track('track', {
 })
 ```
 
+No Zaraz dashboard event mapping is required. Call `zaraz.track('track', ...)` directly from the confirmed client-side conversion path. The component receives the `track` event and sends it to Dub as a lead when a `dub_id` click ID is available. For example, company registration uses:
+
+```javascript
+zaraz.track('track', {
+  eventName: 'Company registered',
+  customerExternalId: companyRegistrationId,
+})
+```
+
+The `customerExternalId` must be a stable identifier in your system. `amount` and `revenue` must be omitted for lead events; either field causes the component to send a sale instead.
+
 ### Ecommerce/Sale Tracking
 
 Track purchases and revenue:

@@ -510,6 +510,7 @@ describe('Dub MC listener registration', () => {
   it('uses the API key for conversion tracking and registers conversion listeners', async () => {
     const listeners = new Map<string, (event: MCEvent) => Promise<void>>()
     const fetch = vi.fn().mockResolvedValue(new Response())
+    const execute = vi.fn()
     const addEventListener = vi.fn(
       (eventType: string, listener: (event: MCEvent) => Promise<void>) => {
         listeners.set(eventType, listener)
@@ -552,9 +553,12 @@ describe('Dub MC listener registration', () => {
     )
 
     await listeners.get('track')?.({
-      client: dummyClient,
+      client: { ...dummyClient, execute },
       name: 'Registration',
-      payload: { customerExternalId: 'user123' },
+      payload: {
+        customerExternalId: 'user123',
+        plainDubConversionId: 'conversion-123',
+      },
     } as unknown as MCEvent)
 
     expect(mockTrackLead).toHaveBeenCalledWith(
@@ -563,6 +567,9 @@ describe('Dub MC listener registration', () => {
         customerExternalId: 'user123',
         eventName: 'Registration',
       })
+    )
+    expect(execute).toHaveBeenCalledWith(
+      'window.dispatchEvent(new CustomEvent("plain:dub-conversion-confirmed", { detail: {"conversionId":"conversion-123","sent":true} }))'
     )
 
     mockTrackLead.mockClear()

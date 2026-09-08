@@ -17,6 +17,7 @@ const DEFAULT_DUB_API_HOST = 'https://api.dub.co'
 // attributable. See: https://dub.co/docs/sdks/client-side/installation-guides/manual
 const CLICK_COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000
 const DEFAULT_CLICK_QUERY_PARAM = 'via'
+const CONVERSION_CONFIRMED_EVENT = 'plain:dub-conversion-confirmed'
 
 const isDebugEnabled = (settings: ComponentSettings): boolean => {
   return settings.DUB_DEBUG === 'true'
@@ -161,11 +162,20 @@ const getCustomerId = (event: MCEvent): string => {
   )
 }
 
+const confirmConversion = (event: MCEvent, sent: boolean): void => {
+  const conversionId = event.payload.plainDubConversionId
+  if (typeof conversionId !== 'string' || !conversionId) return
+
+  event.client.execute(
+    `window.dispatchEvent(new CustomEvent(${JSON.stringify(CONVERSION_CONFIRMED_EVENT)}, { detail: ${JSON.stringify({ conversionId, sent })} }))`
+  )
+}
+
 // Track a lead event
 export const trackLeadEvent = async (
   dub: Dub,
   event: MCEvent
-): Promise<void> => {
+): Promise<boolean> => {
   const { client, payload } = event
   const clickId = getClickId(client)
   const customerId = getCustomerId(event)
@@ -181,7 +191,7 @@ export const trackLeadEvent = async (
     console.info(
       'Skipping lead event: no dub_id click ID found for this visitor'
     )
-    return
+    return false
   }
 
   const leadData: {
@@ -207,13 +217,14 @@ export const trackLeadEvent = async (
   if (payload.metadata) leadData.metadata = payload.metadata
 
   await dub.track.lead(leadData)
+  return true
 }
 
 // Track a sale event
 export const trackSaleEvent = async (
   dub: Dub,
   event: MCEvent
-): Promise<void> => {
+): Promise<boolean> => {
   const { client, payload } = event
   const clickId = getClickId(client)
   const customerId = getCustomerId(event)
@@ -261,6 +272,7 @@ export const trackSaleEvent = async (
   if (payload.customerAvatar) saleData.customerAvatar = payload.customerAvatar
 
   await dub.track.sale(saleData)
+  return true
 }
 
 const hasSaleAmount = (event: MCEvent): boolean => {
@@ -272,13 +284,12 @@ const trackConversionEvent = async (
   dub: Dub,
   event: MCEvent,
   isSale = false
-): Promise<void> => {
+): Promise<boolean> => {
   if (isSale || hasSaleAmount(event)) {
-    await trackSaleEvent(dub, event)
-    return
+    return trackSaleEvent(dub, event)
   }
 
-  await trackLeadEvent(dub, event)
+  return trackLeadEvent(dub, event)
 }
 
 const setClickCookies = (
@@ -557,9 +568,11 @@ export default async (manager: Manager, settings: ComponentSettings) => {
           ? 'Sending sale conversion event'
           : 'Sending lead conversion event'
       )
-      await trackConversionEvent(dub, event, isSale)
+      const sent = await trackConversionEvent(dub, event, isSale)
+      confirmConversion(event, sent)
     } catch (error) {
       console.error('Failed to track Dub conversion:', error)
+      confirmConversion(event, false)
     }
   }
 
