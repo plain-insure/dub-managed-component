@@ -40,7 +40,11 @@ Until this component is an "official" Managed Component, we need to manually hos
   - `DUB_DEBUG`: set to `true` temporarily to show Dub tracking decisions in Worker logs.
   - `DUB_DEBUG_SHOW_CLICK_ID`: set to `true` with `DUB_DEBUG` only for a temporary cross-subdomain click-ID handoff test.
 
-For browser-console diagnostics while `DUB_DEBUG` is enabled, also grant **Execute unsafe scripts**. This permission is optional and is used only to write the same credential-safe debug messages to the visitor's browser console.
+11. Configure a pageview action with **Action Type** `pageview` and the **Pageview** firing trigger.
+12. Configure the conversion action with **Action Type** `event` and the **All Tracks** firing trigger. In the API configuration, this is `tools.<toolId>.actions.AllTracks.actionType = "event"`, not `"custom-mc-event"`. The latter can fire in Zaraz's debugger without dispatching to this Worker's registered listener.
+13. Publish the configuration when Zaraz uses the preview workflow.
+
+Grant **Execute unsafe scripts** for browser-console diagnostics and conversion confirmations. When a caller supplies `plainDubConversionId`, the deployed component returns a `plain:dub-conversion-confirmed` browser event with the matching ID and a `sent` boolean. A successful Zaraz HTTP response alone does not confirm delivery to Dub.
 
 Custom Managed Components expose only custom name/value settings. Cloudflare does not read this repository's [manifest.json](manifest.json) from the deployed Worker, so its predefined field definitions are not shown in the Zaraz dashboard. Predefined settings require publishing the component to Cloudflare's Managed Components catalog.
 
@@ -127,7 +131,7 @@ zaraz.track('track', {
 })
 ```
 
-No Zaraz dashboard event mapping is required. Call `zaraz.track('track', ...)` directly from the confirmed client-side conversion path. The component receives the `track` event and sends it to Dub as a lead when a `dub_id` click ID is available. For example, company registration uses:
+After configuring the `event` action with the **All Tracks** trigger above, call `zaraz.track('track', ...)` directly from the confirmed client-side conversion path. Zaraz dispatches it to the component's `event` listener, which sends it to Dub as a lead when a `dub_id` click ID is available. For example, company registration uses:
 
 ```javascript
 zaraz.track('track', {
